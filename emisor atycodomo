@@ -1,0 +1,1053 @@
+// ATYCODOMO ) ) ) INFORMACION Y CONTROL DEL HOGAR
+// ATYCODOMO EMISOR
+// DISEÑADO POR JOSE MANUEL LOURIDO
+// http://www.atycocene.com/atycodomo.html
+#include <VirtualWire.h>
+#include <EEPROM.h>
+#include <RemoteReceiver.h>
+#include <RemoteTransmitter.h>
+#include <Time.h>
+#include <Udp.h>
+#include <EthernetUdp.h>
+#include <Ethernet.h>
+#include <SPI.h>
+#include <string.h>
+#undef int()
+#include <stdio.h>
+#define ELECTRICITY_SENSOR A0 // pin de lectura de sensor DHT11
+byte mac[] = {    0x90, 0xA2, 0xDA, 0x0D, 0xD5, 0xDC } ; // dirección mac
+IPAddress server(80,36,75,107);// ip de ATYCODOMO
+String claveescritura = "SUSTITUIR POR CLAVE ESCRITURA API DE TU CANAL DE ORDENES";
+String readAPIKey = "SUSTITUIR POR CLAVE DE LECTURA DE CANAL DE SENSORES";
+const int updateInterval = 10000;// INTERVALO EN MILISEGUNDOS DE LECTURA CON EL SERVIDOR ATYCODOMO
+EthernetClient client;
+//PARAMETROS SERVIDOR UDP PARA CONFIGURACIÓN DE LA HORA
+unsigned int localPort = 8888;      // puerto local para escucha de los paquetes UDP
+byte timeServer[] = {192, 53, 103, 108}; // SERVIDOR NTP time.nist.gov
+const int NTP_PACKET_SIZE= 48; // NTP time stamp en los primeros 48 bytes del mensaje
+byte packetBuffer[ NTP_PACKET_SIZE]; //buffer
+
+EthernetUDP Udp;
+
+char *found;
+char buff[64];
+int pointer = 0;
+boolean found_status_200 = false;
+boolean found_content = false;
+int period1=180;
+const int pinEMISOR=8;
+int rf0=0;
+int rf1=0;
+int rf2=0;
+int rf3=0;
+int portal=0;
+int rf5=0;
+int rf6=0;
+int rf8=0;
+int rf9=0;
+
+String temp="0";
+String hume="0";
+String inte="0";
+String vpir="0";
+String utemperatura="0";
+String uhumedad="0";
+String uintensidad="0";
+int momentoInicio5;
+int momentoFin5;
+int smomentoInicio5;
+int smomentoFin5;
+int momentolimite;
+int estadocero;
+int estadouno;
+int momentoInicio6;
+int momentoFin6;
+int smomentoInicio6;
+int smomentoFin6;
+int momentoInicioa;
+int momentoFina;
+int smomentoInicioa;
+int smomentoFina;
+
+int a=0;
+int momentoAhora; 
+int estadocomecero=0;
+int estadocomeuno=0;
+int lein=0;
+unsigned long time;
+String temperaturas="0";
+String humedads="0";
+String intensidads="0";
+String aviso;
+int avis=0;
+int digital_state[10];
+int analog_state[24];
+int analog_pins[] = { 
+  3, 5, 6, 9};
+int digital_pins[] = { 
+  0, 1, 2, 3, 4, 5, 6, 7,};
+long tinte=20000;
+long lastConnectionTime = 0; 
+boolean lastConnected = false;
+int resetCounter = 0;
+
+
+
+// INICIO DE SETUP
+void setup()
+{
+delay(120000);
+Serial.begin(9600);
+
+
+vw_set_ptt_inverted(true); // Required for DR3100
+vw_setup(2000);	 // Bits per sec
+vw_set_rx_pin(5);//pin de recepcion(ojo con el pin 11 por defecto de emisor no funciona
+vw_set_tx_pin(8);//pin de emisor
+
+unsigned long epoch = 0;
+
+estadocero = int(EEPROM.read(0));
+estadouno = int(EEPROM.read(1));
+
+if ((estadocero!=0) & (estadocero!= 1)) {
+estadocero= 0;
+}
+if ((estadouno!= 0) & (estadouno!= 1)) {
+estadouno= 0;
+}
+
+
+for (int i = 0; i < 8; i++){
+pinMode(i, OUTPUT);
+}
+
+Ethernet.begin(mac);
+  
+Serial.print (estadocero);
+Serial.print (estadouno);
+do
+{
+//setupEthernet();
+if (a>=3){
+epoch=1300000001;
+}
+
+//ESTABLECIMIENTO DE HOTA NTP
+delay (3000);
+Udp.begin(localPort);
+setSyncProvider(getNtpTime);
+setSyncInterval(3600); //sincronizo con servidor UDP cada (60 min x 60seg =3600)
+unsigned long epoch = getNtpTime(); //almaceno la hora en la variable epoch llamando a la funcion getNtpTime()
+
+if (epoch>1300000000){
+setTime(epoch);
+break;
+}
+
+} while ((epoch<1300000000));
+
+}
+// FIN DE SETUP
+
+//INICIO DE BUCLE
+void loop()
+{
+
+  
+if((!client.connected()) && (millis() - lastConnectionTime > updateInterval))
+{
+//control de memoria sram   
+//Serial.print ( ("m") );
+//Serial.println ( freeMemory () );
+//control de memoria sram   
+leeratycodomo();
+}
+  
+//LEER DATOS DE SERVIDOR
+
+if (client.available())
+{
+char c = client.read();
+//Serial.print (c);
+//asignando valores a on-0ff
+if (c=='$') {
+char dLine[9];
+for (int i = 0; i < 10; i++){
+dLine[i] = client.read();
+}
+//found_d = true;
+//Serial.print("V:");
+for (int i = 0; i < 10; i++){
+digital_state[i] = (int) (dLine[i]-48);
+//Serial.print(digital_state[i]);  
+}
+}
+//fin asignando valores a on-0ff
+
+//asignando valores a tiempos
+if   (c=='@')    {
+char aLine[13];
+for (int i = 0; i < 48; i++){
+aLine[i] = client.read();
+}
+//Serial.print("a:");     
+//Serial.print(aLine);
+
+for (int j = 0; j < 24; j++){
+//char *temp = "000";
+char *temp = "00";
+temp[0] = aLine[j*2];
+temp[1] = aLine[j*2 + 1];
+//temp[2] = aLine[j*3 + 2];
+analog_state[j] = (int) atoi(temp);
+//Serial.print(analog_state[j]);
+//Serial.print(",");
+}
+//clean_buffer();
+}
+    
+//asignando valores a tiempos
+
+
+
+//ACCIONANDO RELES
+
+if (millis()>=100000) {
+//accionado on-off portal
+
+if ((digital_state[4]==0) && (estadocero==1)) {
+for (int i=0; i <= 3; i++){
+const char *msg = "p";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx(); // Wait until the whole message is gone
+delay(500);
+}
+estadocero=0;
+EEPROM.write (0, estadocero);
+estadouno=0;
+EEPROM.write (1, estadouno);
+portal = 0;
+aviso= "F";
+avis= 1;
+
+delay(10000);
+
+}
+
+
+   
+if ((digital_state[4]==1) && (estadouno==0)) {
+for (int i=0; i <= 3; i++){
+const char *msg = "p";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx(); // Wait until the whole message is gone
+delay(500);
+}
+estadocero=1;
+EEPROM.write (0, estadocero);
+estadouno=1;
+EEPROM.write (1, estadouno);
+portal = 1;
+aviso= "E";
+avis= 1;
+
+delay(10000);
+
+}
+
+}
+//fin accionado on-off portal
+
+
+int momentoInicioa = (int (analog_state[16])*60) + int (analog_state[17]);
+int momentoFina = (int(analog_state[18])*60) + int (analog_state[19]);
+
+int momentoInicio6 = (int (analog_state[0])*60) + int (analog_state[1]);
+int momentoFin6 = (int(analog_state[2])*60) + int (analog_state[3]);
+
+int momentoInicio5 = (int(analog_state[4])*60) + int (analog_state[5]);
+int momentoFin5 = (int(analog_state[6])*60) + int (analog_state[7]);
+
+int smomentoInicioa = (int (analog_state[20])*60) + int (analog_state[21]);
+int smomentoFina = (int (analog_state[22])*60) + int (analog_state[23]) ;
+
+int smomentoInicio6 = (int (analog_state[8])*60) + int (analog_state[9]);
+int smomentoFin6 = (int (analog_state[10])*60) + int (analog_state[11]) ;
+
+int smomentoInicio5 = (int (analog_state[12])*60) + int (analog_state[13]);
+int smomentoFin5 = (int (analog_state[14])*60) + int (analog_state[15]);
+
+
+int momentoAhora = (hour()*60 +  minute());
+
+
+// TRANSMITIR RF ENCHUFE RF 1 ENCHUFE CONTROL DOMOTICO
+if (digital_state[1]==1) {
+
+if(((momentoInicioa<=momentoAhora) && (momentoAhora<momentoFina))||((smomentoInicioa<=momentoAhora) && (momentoAhora<smomentoFina))){
+
+if (rf1==0) {
+cli();
+sei();
+
+unsigned long A = 492004;
+
+delay(2*period1);
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(10000);
+
+//Serial.print("if si");
+//Serial.print(":h:");
+//Serial.print(hour());
+//Serial.print(":");
+//Serial.print(minute());
+//Serial.print(",ma:");
+//Serial.print(momentoAhora);
+
+
+
+rf1=1;
+aviso= "I";
+avis= 1;
+
+}  
+}
+
+else {
+
+if (rf1==1) {
+cli();
+sei();
+delay(2*period1);
+
+unsigned long A  = 492006;
+
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(5000);
+
+//Serial.print("if no");
+//Serial.print(":h:");
+//Serial.print(hour());
+//Serial.print(":");
+//Serial.print(minute());
+//Serial.print(",ma:");
+//Serial.print(momentoAhora);
+
+rf1=0;  
+aviso= "J";
+avis= 1;
+
+}
+          
+}
+
+}
+
+if (digital_state[1]==0) {
+if (rf1==1) {
+cli();
+sei();
+delay(2*period1);
+
+unsigned long A = 492006;
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(5000);
+rf1=0;
+aviso= "J";
+avis= 1;
+}     
+}
+
+// FIN TRANSMITIR RF ENcHUFE RF 1 ENCHUFE CONTROL DOMOTICO
+
+
+
+// CODIGO TEMPORIZADO DE RELE NUMERO 5 CON INICIO Y FIN A HORA DETERMINADA     
+if (digital_state[5]==1) {
+if(((momentoInicio5<=momentoAhora) && (momentoAhora<momentoFin5)) || ((smomentoInicio5<=momentoAhora) && (momentoAhora<smomentoFin5))){
+
+if (rf5==0) {
+
+for (int i=0; i <= 3; i++){
+const char *msg = "e";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+
+rf5=1;
+aviso= "C";
+avis= 1;
+delay(5000);
+}
+}
+
+else {
+
+if (rf5==1) {
+
+for (int i=0; i <= 3; i++){
+const char *msg = "f";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+
+rf5=0;
+aviso= "D";
+avis= 1;
+delay(5000);
+}  
+  
+}
+          
+}
+
+if (digital_state[5]==0) {
+
+if (rf5==1) {
+
+for (int i=0; i <= 3; i++){
+const char *msg = "f";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+rf5=0;
+aviso= "D";
+avis= 1;
+delay(5000);
+} 
+}
+// FIN CODIGO TEMPORIZADO DE RELE NUMERO 5 CON INICIO Y FIN A HORA DETERMINADA      
+
+
+
+//temporizar rele 6
+if (digital_state[6]==1) {
+
+if(((momentoInicio6<=momentoAhora) && (momentoAhora<momentoFin6))||((smomentoInicio6<=momentoAhora) && (momentoAhora<smomentoFin6))){
+
+if (rf6==0) {
+
+for (int i=0; i <= 3; i++){
+const char *msg = "g";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+rf6=1;
+aviso= "A";
+avis= 1;
+delay(5000);
+}  
+}
+
+else {
+
+if (rf6==1) {
+for (int i=0; i <= 3; i++){
+const char *msg = "h";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+rf6=0;
+aviso= "B";
+avis= 1;
+delay(5000);
+}   
+}
+          
+}
+
+if (digital_state[6]==0) {
+
+if (rf6==1) {
+
+for (int i=0; i <= 3; i++){
+const char *msg = "h";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+rf6=0;
+aviso= "B";
+avis= 1;
+delay(5000);
+}     
+}
+
+// FIN CODIGO TEMPORIZADO DE RELE NUMERO 6 CON INICIO Y FIN A HORA DETERMINADA(HORA DE RIEGO)      
+
+// TRANSMITIR RF A ARDUINO Y PIN DIGITAL 13 DE RECEPTOR
+
+if (digital_state[8]==1) {
+if (rf8==0) {
+for (int i=0; i <= 1; i++){
+const char *msg = "a";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(500);
+}
+rf8=1;
+aviso= "O";
+avis= 1;
+delay(5000);
+}
+}
+
+if (digital_state[8]==0) {
+if (rf8==1) {
+for (int i=0; i <= 1; i++){
+const char *msg = "c";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+delay(5000);
+}
+rf8=0;
+aviso= "P";
+avis= 1;
+delay(5000);
+}
+}
+
+// FIN TRANSMITIR RF A ARDUINO Y PIN DIGITAL 13 DE RECEPTOR
+
+
+// SOLICITAR TEMPERATURA, HUMEDAD E INTENSIDAD
+
+if (digital_state[9]==1) {
+if (rf9==0) {
+
+inte=intensidad();
+//Serial.print("int:");
+//Serial.print(inte);
+delay(1000);
+temp=temperatura();
+//Serial.print("temp:");
+//Serial.print(temp);
+delay(1000);
+hume=humedad();
+//Serial.print("hume:");
+//Serial.print(hume);
+delay(1000);
+vpir=valorpir();
+//Serial.print("vpir:");
+//Serial.print(vpir);
+
+lein=1;  
+  
+rf9=1;
+}
+}
+
+if (digital_state[9]==0) {
+if (rf9==1) {
+inte=intensidad();
+//Serial.print("int:");
+//Serial.print(inte);
+delay(1000);
+temp=temperatura();
+//Serial.print("temp:");
+//Serial.print(temp);
+delay(1000);
+hume=humedad();
+//Serial.print("hume:");
+//Serial.print(hume);
+delay(1000);
+vpir=valorpir();
+//Serial.print("vpir:");
+//Serial.print(vpir);
+
+lein=1;
+
+rf9=0;
+}
+
+}
+
+// FIN SOLICITAR TEMPERATURA, HUMEDAD E INTENSIDAD
+
+
+
+
+
+
+
+
+// TRANSMITIR RF ENcHUFE RF 2
+
+if (digital_state[2]==1) {
+if (rf2==0) {
+cli();
+sei();
+delay(2*period1);
+unsigned long A  = 492022;
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(5000);
+rf2=1;
+aviso= "K";
+avis= 1;
+}
+}
+
+if (digital_state[2]==0) {
+if (rf2==1) {
+cli();
+sei();
+delay(2*period1);
+unsigned long A  = 492024;
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(5000);
+rf2=0;
+aviso= "L";
+avis= 1;
+}
+}
+
+
+// TRANSMITIR RF ENcHUFE RF 3
+
+if (digital_state[3]==1) {
+if (rf3==0) {
+cli();
+sei();
+delay(2*period1);
+unsigned long A  = 491914;
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(5000);
+rf3=1;
+aviso= "M";
+avis= 1;
+}
+}
+
+if (digital_state[3]==0) {
+if (rf3==1) {
+cli();
+sei();
+delay(2*period1);
+unsigned long A  = 491916;
+RemoteTransmitter::sendCode(pinEMISOR,A,period1,3);
+delay(5000);
+rf3=0;
+aviso= "N";
+avis= 1;
+}
+}
+
+//FIN TRANSMITIR RF
+
+//MANDANDO AVISO DE PIR
+//if (vpir=="1"){
+//Serial.print("se cumple vpir:1");
+//aviso= "R";
+//avis= 1;
+//}
+//FIN AVISO PIR
+
+
+
+//FIN ACCIONANDO RELES
+
+//TERMINA LEER DATOS DE SERVIDOR
+
+}
+ 
+ 
+// ACTUALIZA LOS DATOS DE TEMPERATURA Y HUMEDAD
+if(!client.connected() && (millis() - lastConnectionTime > updateInterval))
+{   
+
+
+// RECIBE TEMPERATURA, HUMEDAD, INTENSIDAD Y PIR SENSOR INALAMBRICO
+
+
+if ((minute() ==0) || (minute() ==15) || (minute() ==30) || (minute() ==45))
+{
+inte=intensidad();
+//Serial.print("int:");
+//Serial.print(inte);
+delay(1000);
+temp=temperatura();
+//Serial.print("temp:");
+//Serial.print(temp);
+delay(1000);
+hume=humedad();
+//Serial.print("hume:");
+//Serial.print(hume);
+delay(1000);
+vpir=valorpir();
+//Serial.print("vpir:");
+//Serial.print(vpir);
+
+
+lein=1;
+}
+
+else
+{
+lein=0;
+}
+// FIN RECEPCION TEMPERATURA, HUMEDAD, INTENSIDAD Y PIR SENSOR INALAMBRICO
+
+
+
+
+
+// CONFECCION DE LOS AVISOS
+
+if ((avis==1) && (lein==0)) {
+avisoatycodomo(aviso);
+}
+
+// FIN CONFECCION DE LOS AVISOS
+
+
+else 
+{
+  
+//if ((t != utemperatura)||(h != uhumedad) || (i >uintensidad+20)||(i <uintensidad-20) )
+//if ((r != utemperatura)||(m != uhumedad) || (i >uintensidad+20)||(i <uintensidad-20) )
+if (((inte != "0")&&(temp != "0")&&(hume != "0")) &&((inte != uintensidad)||(temp != utemperatura)||(hume != uhumedad)) &&  (lein==0))
+
+{
+
+uhumedad=hume;
+utemperatura=temp;
+uintensidad=inte;
+
+temperaturas= String(temp);
+humedads= String(hume);
+intensidads=String(inte);
+
+
+String datossensores=("field1="+temperaturas+"&field2="+humedads+"&field3="+intensidads+"&field4="+vpir);
+//Serial.print("escribo datos sensores");
+escribiratycodomo(datossensores);
+
+}
+  
+}
+} 
+  
+
+
+// DESCONECTANDO DE SERVIDOR
+ 
+if (!client.connected() && lastConnected)
+{
+//Serial.println("d");
+client.stop();
+}
+lastConnected = client.connected();
+}
+//TERMINA EL BUCLE
+
+
+void avisoatycodomo(String aviso)
+{
+if (client.connect(server, 3000))
+{ 
+//Serial.println("envia aviso");
+//Serial.println();
+        
+//client.print("GET /mailer/avisoatycodomo?[user]login=c1447@coaatac.com&[aviso]=holatio HTTP/1.1\n");
+    
+client.print("GET /mailer/avisoatycodomo?[user]login=c1447@coaatac.com&[aviso]=");
+client.print(aviso+" HTTP/1.1\n");
+client.print("Host: 80.36.75.107\n");
+client.print("Connection: close\n");
+client.print("Content-Type: application/x-www-form-urlencoded\n");
+client.print("Content-Length: ");
+client.print("\n\n");
+
+lastConnectionTime = millis();
+resetCounter = 0;
+    
+avis=0;
+vpir="0";
+}
+}
+
+void escribiratycodomo(String datossensores)
+{
+  
+if (client.connect(server, 3000))
+{ 
+    
+//Serial.println("p");
+//Serial.println();
+         
+client.print("GET /update?key=MUT6N6N1MVF3RHTH&");
+client.print(datossensores+" HTTP/1.1\n");
+    
+client.print("Host: 80.36.75.107\n");
+client.print("Connection: close\n");
+client.print("Content-Type: application/x-www-form-urlencoded\n");
+client.print("Content-Length: ");
+client.print("\n\n");
+    
+lastConnectionTime = millis();
+resetCounter = 0;
+    
+   
+}
+}
+
+void leeratycodomo()
+{
+  
+if (client.connect(server, 3000))
+{ 
+//Serial.println("l");
+//Serial.println();
+     
+client.print("GET /channels/2/feed/last.csv?key= HTTP/1.1\n");
+client.print("Host: 80.36.75.107\n");
+client.print("Connection: close\n");
+client.print("X-THINGSPEAKAPIKEY: "+readAPIKey+"\n");
+client.print("Content-Type: application/x-www-form-urlencoded\n");
+client.print("Content-Length: ");
+client.print("0");
+client.print("\n\n");
+
+lastConnectionTime = millis();
+resetCounter = 0;
+   
+if (!client.connected() && lastConnected)
+{
+Serial.println();
+Serial.println("...disc");
+Serial.println();
+client.stop();
+}
+} 
+    
+else
+{
+Serial.println("Con Failed.");   
+Serial.println();
+resetCounter++;
+if (resetCounter >=2 ) 
+{
+resetEthernetShield();
+}
+lastConnectionTime = millis(); 
+} 
+  
+}
+
+
+void resetEthernetShield()
+{
+Serial.println("Reset");   
+Serial.println();
+client.stop();
+delay(1000);
+Ethernet.begin(mac);
+delay(1000);
+clean_buffer();
+}
+
+void clean_buffer() {
+pointer = 0;
+memset(buff,0,sizeof(buff)); 
+}
+
+//ESTABLECIMIENTO DE HORA del servidor NTP
+
+unsigned long getNtpTime(){
+sendNTPpacket(timeServer); // enviar paquete NTP al servidor de hora
+delay(5000);// esperar para ver si hay respuesta
+//if ( Udp.available() ) {  
+if ( Udp.parsePacket() ) {
+Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer 
+//Udp.read(packetBuffer,UDP_TX_PACKET_MAX_SIZE); 
+  
+unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);  
+// la hora obtenida son los segundos desde 1 de Enero de 1900
+unsigned long secsSince1900 = highWord << 16 | lowWord;  
+//Convertir la hora recibida al formato en que trabajan las funciones (hora Unix, 1 de enero de 1970), En segundos, son 2208988800:
+const unsigned long seventyYears = 2208988800UL;    
+//restar 70 aÃƒÂ±os
+unsigned long epoch = secsSince1900 - seventyYears;  
+// retornar Unix time: sumando dos horas por la diferencia horaria
+return epoch+7200;
+}
+a=a+1;
+}
+
+//memoria
+//extern unsigned int __bss_end;
+//extern unsigned int __heap_start;
+//extern void *__brkval;
+
+//static int freeMemory ( void ) 
+//{
+//int free_memory;
+  
+//if((int)__brkval == 0)
+//free_memory = ((int)&free_memory) - ((int)&__bss_end);
+//else
+//free_memory = ((int)&free_memory) - ((int)__brkval);
+//return free_memory;
+//}
+//memoria
+
+
+//Funcion para enviar el paquete NTP
+
+
+unsigned long sendNTPpacket(byte *address)
+//unsigned long sendNTPpacket(IPAddress *address)
+{
+// set all bytes in the buffer to 0
+memset(packetBuffer, 0, NTP_PACKET_SIZE);
+// Initialize values needed to form NTP request
+// (see URL above for details on the packets)
+packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+packetBuffer[1] = 0;     // Stratum, or type of clock
+packetBuffer[2] = 6;     // Polling Interval
+packetBuffer[3] = 0xEC;  // Peer Clock Precision
+
+packetBuffer[12]  = 49;
+packetBuffer[13]  = 0x4E;
+packetBuffer[14]  = 49;
+packetBuffer[15]  = 52;
+
+Udp.beginPacket(address, 123); //NTP requests are to port 123
+Udp.write(packetBuffer, NTP_PACKET_SIZE);
+Udp.endPacket();
+}
+
+//FIN ESTABLECIMIENTO DE HORA
+
+
+
+
+String temperatura() {
+// RECIBE TEMPERATURA SENSOR INALAMBRICO
+for (int i = 0; i <= 1; i++) {
+const char *msg = "r";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+//delay(200);
+}
+
+vw_setup(2000);	 // Bits per sec
+vw_rx_start();       // Start the receiver PLL running
+uint8_t buf[VW_MAX_MESSAGE_LEN];
+uint8_t buflen = VW_MAX_MESSAGE_LEN;
+
+vw_wait_rx_max(2000);
+if (vw_get_message(buf, &buflen)) // Non-blocking
+{
+temp = "";
+for (int i = 0; i < buflen; i++)
+{
+temp = temp + String (char(buf[i]));
+}
+}
+
+vw_rx_stop();
+clean_buffer();
+return temp;
+}
+// FIN RECEPCION TEMPERATURA SENSOR INALAMBRICO
+
+
+
+
+// RECIBE HUMEDAD SENSOR INALAMBRICO
+String humedad() {
+
+for (int i = 0; i <= 1; i++) {
+const char *msg = "m";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+//delay(200);
+}
+
+vw_setup(2000);
+vw_rx_start();
+uint8_t buf[VW_MAX_MESSAGE_LEN];
+uint8_t buflen = VW_MAX_MESSAGE_LEN;
+
+vw_wait_rx_max(2000);
+if (vw_get_message(buf, &buflen))
+{
+hume = "";
+for (int i = 0; i < buflen; i++)
+{
+hume = hume + String (char(buf[i]));
+}
+}
+vw_rx_stop();
+clean_buffer();
+return hume;
+}
+// FIN RECEPCION HUMEDAD SENSOR INALAMBRICO
+
+// RECIBE INTENSIDAD SENSOR INALAMBRICO
+String intensidad() {
+
+for (int i = 0; i <= 1; i++) {
+const char *msg = "z";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+//delay(200);
+}
+
+vw_setup(2000);
+vw_rx_start();
+uint8_t buf[VW_MAX_MESSAGE_LEN];
+uint8_t buflen = VW_MAX_MESSAGE_LEN;
+
+vw_wait_rx_max(2000);
+if (vw_get_message(buf, &buflen))
+{
+inte = "";
+for (int i = 0; i < buflen; i++)
+{
+inte = inte + String (char(buf[i]));
+}
+}
+vw_rx_stop();
+clean_buffer();
+return inte;
+}
+// FIN RECEPCION INTENSIDAD SENSOR INALAMBRICO
+
+// RECIBE VALOR PIR SENSOR INALAMBRICO
+String valorpir() {
+
+for (int i = 0; i <= 1; i++) {
+const char *msg = "i";
+vw_send((uint8_t *)msg, strlen(msg));
+vw_wait_tx();
+//delay(200);
+}
+
+vw_setup(2000);
+vw_rx_start();
+uint8_t buf[VW_MAX_MESSAGE_LEN];
+uint8_t buflen = VW_MAX_MESSAGE_LEN;
+
+vw_wait_rx_max(2000);
+if (vw_get_message(buf, &buflen))
+{
+vpir = "";
+for (int i = 0; i < buflen; i++)
+{
+vpir = vpir + String (char(buf[i]));
+}
+}
+vw_rx_stop();
+clean_buffer();
+return vpir;
+}
+// FIN RECEPCION VALOR PIR
